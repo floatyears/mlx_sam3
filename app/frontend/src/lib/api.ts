@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8008";
 
 export interface UploadResponse {
   session_id: string;
@@ -19,13 +19,16 @@ export interface SegmentationResult {
   masks?: RLEMask[];      // RLE-encoded masks
   boxes?: number[][];     // [N, 4] as [x0, y0, x1, y1]
   scores?: number[];      // [N]
+  semantic_seg?: RLEMask; // RLE-encoded semantic segmentation mask
   prompted_boxes?: { box: number[]; label: boolean }[];
+  prompted_points?: { point: number[]; label: boolean }[];
 }
 
 export interface SegmentResponse {
   session_id: string;
   prompt?: string;
   box_type?: string;
+  point_type?: string;
   results: SegmentationResult;
   processing_time_ms: number;
 }
@@ -40,12 +43,12 @@ export interface ResetResponse {
 // Helper to fetch with error handling
 async function apiFetch<T>(fetchFn: () => Promise<Response>): Promise<T> {
   const response = await fetchFn();
-  
+
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || "Request failed");
   }
-  
+
   return response.json();
 }
 
@@ -84,6 +87,20 @@ export async function addBoxPrompt(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: sessionId, box, label }),
+    })
+  );
+}
+
+export async function addPointPrompt(
+  sessionId: string,
+  point: number[],
+  label: boolean
+): Promise<SegmentResponse> {
+  return apiFetch<SegmentResponse>(() =>
+    fetch(`${API_BASE}/segment/point`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, point, label }),
     })
   );
 }

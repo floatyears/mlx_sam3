@@ -123,6 +123,32 @@ class Sam3Processor:
 
         return self._call_grounding(state)
 
+    def add_point_prompt(self, point: List, label: bool, state: Dict):
+        """Adds a point prompt and run the inference.
+        The image needs to be set, but not necessarily the text prompt.
+        The point is assumed to be in [x, y] format and normalized in [0, 1] range.
+        The label is True for a positive point (foreground), False for a negative point (background).
+        """
+        if "backbone_out" not in state:
+            raise ValueError("You must call set_image before add_point_prompt")
+
+        if "language_features" not in state["backbone_out"]:
+            # No text prompt yet — set dummy "visual" text so model relies on geometric prompt
+            dummy_text_outputs = self.model.backbone.call_text(
+                ["visual"]
+            )
+            state["backbone_out"].update(dummy_text_outputs)
+
+        if "geometric_prompt" not in state:
+            state["geometric_prompt"] = self.model._get_dummy_prompt()
+
+        # adding a batch and sequence dimension: [1, 1, 2]
+        points = mx.array(point, dtype=mx.float32).reshape(1, 1, 2)
+        labels = mx.array([label], dtype=mx.bool_).reshape(1, 1)
+        state["geometric_prompt"].append_points(points, labels)
+
+        return self._call_grounding(state)
+
     def reset_all_prompts(self, state: Dict):
         """Removes all the prompts and results"""
         if "backbone_out" in state:

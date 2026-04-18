@@ -79,7 +79,7 @@ if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
     cd "$SCRIPT_DIR"
 fi
 
-echo -e "${GREEN}Starting Backend (FastAPI) on http://localhost:8000${NC}"
+echo -e "${GREEN}Starting Backend (FastAPI) on http://localhost:8008${NC}"
 cd "$PROJECT_ROOT"
 uv run python "$BACKEND_DIR/main.py" &
 BACKEND_PID=$!
@@ -98,8 +98,8 @@ echo ""
 echo -e "${GREEN}════════════════════════════════════════${NC}"
 echo -e "${GREEN}  Servers are running!${NC}"
 echo -e "${GREEN}  Frontend: http://localhost:3000${NC}"
-echo -e "${GREEN}  Backend:  http://localhost:8000${NC}"
-echo -e "${GREEN}  API Docs: http://localhost:8000/docs${NC}"
+echo -e "${GREEN}  Backend:  http://localhost:8008${NC}"
+echo -e "${GREEN}  API Docs: http://localhost:8008/docs${NC}"
 echo -e "${GREEN}════════════════════════════════════════${NC}"
 echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop all servers${NC}"

@@ -3,13 +3,17 @@
 import React, { useRef, useEffect, useState, useCallback } from "react";
 import type { SegmentationResult, RLEMask } from "@/lib/api";
 
+export type InteractionMode = "box" | "point";
+
 interface Props {
   imageUrl: string | null;
   imageWidth: number;
   imageHeight: number;
   result: SegmentationResult | null;
   boxMode: "positive" | "negative";
+  interactionMode: InteractionMode;
   onBoxDrawn: (box: number[]) => void;
+  onPointClicked: (point: number[], label: boolean) => void;
   isLoading: boolean;
 }
 
@@ -67,7 +71,9 @@ export function SegmentationCanvas({
   imageHeight,
   result,
   boxMode,
+  interactionMode,
   onBoxDrawn,
+  onPointClicked,
   isLoading,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -210,8 +216,45 @@ export function SegmentationCanvas({
       }
     }
 
+    // Draw prompted points
+    if (result?.prompted_points) {
+      for (const promptedPoint of result.prompted_points) {
+        const [px, py] = promptedPoint.point;
+        const cx = px * displayScale;
+        const cy = py * displayScale;
+        const isPositive = promptedPoint.label;
+        const pointColor = isPositive ? "#3beba1" : "#f87171";
+
+        // Outer circle with glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+        ctx.fillStyle = pointColor;
+        ctx.globalAlpha = 0.3;
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+
+        // Inner filled circle
+        ctx.beginPath();
+        ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+        ctx.fillStyle = pointColor;
+        ctx.fill();
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Draw + or - symbol
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 10px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(isPositive ? "+" : "−", cx, cy);
+        ctx.textAlign = "start";
+        ctx.textBaseline = "alphabetic";
+      }
+    }
+
     // Draw current drawing box
-    if (isDrawing && startPoint && currentPoint) {
+    if (isDrawing && startPoint && currentPoint && interactionMode === "box") {
       const x = Math.min(startPoint.x, currentPoint.x);
       const y = Math.min(startPoint.y, currentPoint.y);
       const width = Math.abs(currentPoint.x - startPoint.x);
@@ -232,6 +275,7 @@ export function SegmentationCanvas({
     startPoint,
     currentPoint,
     boxMode,
+    interactionMode,
   ]);
 
   useEffect(() => {
@@ -252,15 +296,18 @@ export function SegmentationCanvas({
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (isLoading) return;
     const coords = getCanvasCoordinates(e);
-    if (coords) {
+    if (!coords) return;
+
+    if (interactionMode === "box") {
       setIsDrawing(true);
       setStartPoint(coords);
       setCurrentPoint(coords);
     }
+    // For point mode, we handle on mouseUp to avoid accidental triggers
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
+    if (!isDrawing || interactionMode !== "box") return;
     const coords = getCanvasCoordinates(e);
     if (coords) {
       setCurrentPoint(coords);
@@ -268,10 +315,7 @@ export function SegmentationCanvas({
   };
 
   const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || !startPoint) {
-      setIsDrawing(false);
-      return;
-    }
+    if (isLoading) return;
 
     const coords = getCanvasCoordinates(e);
     if (!coords) {
@@ -279,27 +323,48 @@ export function SegmentationCanvas({
       return;
     }
 
-    // Calculate box in original image coordinates
-    const x0 = Math.min(startPoint.x, coords.x) / displayScale;
-    const y0 = Math.min(startPoint.y, coords.y) / displayScale;
-    const x1 = Math.max(startPoint.x, coords.x) / displayScale;
-    const y1 = Math.max(startPoint.y, coords.y) / displayScale;
+    if (interactionMode === "point") {
+      // Point mode: single click sends a point prompt
+      const imgX = coords.x / displayScale;
+      const imgY = coords.y / displayScale;
 
-    // Minimum box size check
-    if (Math.abs(x1 - x0) < 10 || Math.abs(y1 - y0) < 10) {
-      setIsDrawing(false);
-      setStartPoint(null);
-      setCurrentPoint(null);
-      return;
+      // Normalize to [0, 1]
+      const normX = imgX / imageWidth;
+      const normY = imgY / imageHeight;
+
+      // Clamp to valid range
+      const clampedX = Math.max(0, Math.min(1, normX));
+      const clampedY = Math.max(0, Math.min(1, normY));
+
+      onPointClicked([clampedX, clampedY], boxMode === "positive");
+    } else if (interactionMode === "box") {
+      if (!isDrawing || !startPoint) {
+        setIsDrawing(false);
+        return;
+      }
+
+      // Calculate box in original image coordinates
+      const x0 = Math.min(startPoint.x, coords.x) / displayScale;
+      const y0 = Math.min(startPoint.y, coords.y) / displayScale;
+      const x1 = Math.max(startPoint.x, coords.x) / displayScale;
+      const y1 = Math.max(startPoint.y, coords.y) / displayScale;
+
+      // Minimum box size check
+      if (Math.abs(x1 - x0) < 10 || Math.abs(y1 - y0) < 10) {
+        setIsDrawing(false);
+        setStartPoint(null);
+        setCurrentPoint(null);
+        return;
+      }
+
+      // Convert to normalized center x, center y, width, height format
+      const centerX = (x0 + x1) / 2 / imageWidth;
+      const centerY = (y0 + y1) / 2 / imageHeight;
+      const width = (x1 - x0) / imageWidth;
+      const height = (y1 - y0) / imageHeight;
+
+      onBoxDrawn([centerX, centerY, width, height]);
     }
-
-    // Convert to normalized center x, center y, width, height format
-    const centerX = (x0 + x1) / 2 / imageWidth;
-    const centerY = (y0 + y1) / 2 / imageHeight;
-    const width = (x1 - x0) / imageWidth;
-    const height = (y1 - y0) / imageHeight;
-
-    onBoxDrawn([centerX, centerY, width, height]);
 
     setIsDrawing(false);
     setStartPoint(null);
@@ -335,10 +400,15 @@ export function SegmentationCanvas({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
-        className={`rounded-lg shadow-xl ${
-          isLoading ? "opacity-50 pointer-events-none" : ""
-        }`}
-        style={{ cursor: isLoading ? "wait" : "crosshair" }}
+        className={`rounded-lg shadow-xl ${isLoading ? "opacity-50 pointer-events-none" : ""
+          }`}
+        style={{
+          cursor: isLoading
+            ? "wait"
+            : interactionMode === "point"
+              ? "crosshair"
+              : "crosshair",
+        }}
       />
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center">

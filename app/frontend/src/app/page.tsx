@@ -14,21 +14,24 @@ import {
   BoxSelect,
   Timer,
   Server,
+  MousePointer,
+  Crosshair,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { SegmentationCanvas } from "@/components/SegmentationCanvas";
+import { SegmentationCanvas, type InteractionMode } from "@/components/SegmentationCanvas";
 import {
   uploadImage,
   segmentWithText,
   addBoxPrompt,
+  addPointPrompt,
   resetPrompts,
   checkHealth,
   type SegmentationResult,
 } from "@/lib/api";
 
-type BoxMode = "positive" | "negative";
+type PromptLabel = "positive" | "negative";
 
 interface TimingEntry {
   label: string;
@@ -53,7 +56,8 @@ export default function Home() {
   const [imageHeight, setImageHeight] = useState(0);
   const [result, setResult] = useState<SegmentationResult | null>(null);
   const [textPrompt, setTextPrompt] = useState("");
-  const [boxMode, setBoxMode] = useState<BoxMode>("positive");
+  const [promptLabel, setPromptLabel] = useState<PromptLabel>("positive");
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>("point");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [backendStatus, setBackendStatus] = useState<
@@ -165,10 +169,10 @@ export default function Home() {
         const response = await addBoxPrompt(
           sessionId,
           box,
-          boxMode === "positive"
+          promptLabel === "positive"
         );
         setResult(response.results);
-        addTiming(`Box (${boxMode})`, response.processing_time_ms);
+        addTiming(`Box (${promptLabel})`, response.processing_time_ms);
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Failed to add box prompt"
@@ -177,7 +181,29 @@ export default function Home() {
         setIsLoading(false);
       }
     },
-    [sessionId, boxMode, addTiming]
+    [sessionId, promptLabel, addTiming]
+  );
+
+  const handlePointClicked = useCallback(
+    async (point: number[], label: boolean) => {
+      if (!sessionId) return;
+
+      setError(null);
+      setIsLoading(true);
+
+      try {
+        const response = await addPointPrompt(sessionId, point, label);
+        setResult(response.results);
+        addTiming(`Point (${label ? "positive" : "negative"})`, response.processing_time_ms);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to add point prompt"
+        );
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [sessionId, addTiming]
   );
 
   const handleReset = async () => {
@@ -199,6 +225,7 @@ export default function Home() {
   };
 
   const maskCount = result?.masks?.length ?? 0;
+  const pointCount = result?.prompted_points?.length ?? 0;
 
   // Calculate average inference time (excluding upload)
   const inferenceTimings = timings.filter(
@@ -222,7 +249,7 @@ export default function Home() {
             <div>
               <h1 className="text-2xl font-bold tracking-tight">SAM3 Studio</h1>
               <p className="text-sm text-muted-foreground">
-                Interactive segmentation with text & box prompts
+                Interactive segmentation with text, box &amp; point prompts
               </p>
             </div>
           </div>
@@ -321,50 +348,78 @@ export default function Home() {
             </CardContent>
           </Card>
 
-          {/* Box Prompt Card */}
+          {/* Interaction Mode Card */}
           <Card className={!sessionId ? "opacity-50 pointer-events-none" : ""}>
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
-                <BoxSelect className="w-4 h-4" />
-                Box Prompts
+                <MousePointer className="w-4 h-4" />
+                Interaction Mode
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <p className="text-xs text-muted-foreground">
-                Draw boxes on the image to include or exclude regions
-              </p>
+              {/* Mode Toggle */}
               <div className="flex gap-2">
                 <Button
-                  variant={boxMode === "positive" ? "default" : "secondary"}
+                  variant={interactionMode === "point" ? "default" : "secondary"}
                   size="sm"
-                  onClick={() => setBoxMode("positive")}
+                  onClick={() => setInteractionMode("point")}
+                  className="flex-1"
+                >
+                  <Crosshair className="w-4 h-4 mr-1" />
+                  Point
+                </Button>
+                <Button
+                  variant={interactionMode === "box" ? "default" : "secondary"}
+                  size="sm"
+                  onClick={() => setInteractionMode("box")}
+                  className="flex-1"
+                >
+                  <BoxSelect className="w-4 h-4 mr-1" />
+                  Box
+                </Button>
+              </div>
+
+              {/* Label Toggle (shared for both modes) */}
+              <div className="flex gap-2">
+                <Button
+                  variant={promptLabel === "positive" ? "default" : "secondary"}
+                  size="sm"
+                  onClick={() => setPromptLabel("positive")}
                   className="flex-1"
                 >
                   <Square className="w-4 h-4 mr-1" />
                   Include
                 </Button>
                 <Button
-                  variant={boxMode === "negative" ? "destructive" : "secondary"}
+                  variant={promptLabel === "negative" ? "destructive" : "secondary"}
                   size="sm"
-                  onClick={() => setBoxMode("negative")}
+                  onClick={() => setPromptLabel("negative")}
                   className="flex-1"
                 >
                   <SquareMinus className="w-4 h-4 mr-1" />
                   Exclude
                 </Button>
               </div>
+
+              {/* Current mode indicator */}
               <div className="flex items-center gap-2 text-xs">
                 <div
-                  className={`w-3 h-3 rounded border-2 ${
-                    boxMode === "positive"
+                  className={`w-3 h-3 rounded-full border-2 ${
+                    promptLabel === "positive"
                       ? "border-primary bg-primary/20"
-                      : "border-muted"
+                      : "border-destructive bg-destructive/20"
                   }`}
                 />
                 <span className="text-muted-foreground">
-                  Drawing: {boxMode === "positive" ? "Include" : "Exclude"}
+                  {interactionMode === "point" ? "Click" : "Draw"}: {promptLabel === "positive" ? "Include" : "Exclude"}
                 </span>
               </div>
+
+              <p className="text-xs text-muted-foreground">
+                {interactionMode === "point"
+                  ? "Click on the image to add point prompts"
+                  : "Draw boxes on the image to include or exclude regions"}
+              </p>
             </CardContent>
           </Card>
 
@@ -384,6 +439,12 @@ export default function Home() {
                   <span className="font-medium">
                     {result.prompted_boxes.length}
                   </span>
+                </div>
+              )}
+              {pointCount > 0 && (
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Point prompts:</span>
+                  <span className="font-medium">{pointCount}</span>
                 </div>
               )}
               <Button
@@ -495,8 +556,10 @@ export default function Home() {
                 imageWidth={imageWidth}
                 imageHeight={imageHeight}
                 result={result}
-                boxMode={boxMode}
+                boxMode={promptLabel}
+                interactionMode={interactionMode}
                 onBoxDrawn={handleBoxDrawn}
+                onPointClicked={handlePointClicked}
                 isLoading={isLoading}
               />
             </CardContent>
@@ -505,12 +568,21 @@ export default function Home() {
           {/* Keyboard Shortcuts */}
           {sessionId && (
             <div className="mt-4 flex flex-wrap gap-4 text-xs text-muted-foreground animate-fade-in-up">
-              <div className="flex items-center gap-2">
-                <kbd className="px-2 py-1 bg-card rounded border border-border font-mono">
-                  Click + Drag
-                </kbd>
-                <span>Draw box</span>
-              </div>
+              {interactionMode === "point" ? (
+                <div className="flex items-center gap-2">
+                  <kbd className="px-2 py-1 bg-card rounded border border-border font-mono">
+                    Click
+                  </kbd>
+                  <span>Add point prompt</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <kbd className="px-2 py-1 bg-card rounded border border-border font-mono">
+                    Click + Drag
+                  </kbd>
+                  <span>Draw box</span>
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <kbd className="px-2 py-1 bg-card rounded border border-border font-mono">
                   Enter

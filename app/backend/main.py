@@ -80,6 +80,12 @@ class BoxPromptRequest(BaseModel):
     label: bool  # True for positive, False for negative
 
 
+class PointPromptRequest(BaseModel):
+    session_id: str
+    point: list[float]  # [x, y] normalized in [0, 1]
+    label: bool  # True for positive (foreground), False for negative (background)
+
+
 class ConfidenceRequest(BaseModel):
     session_id: str
     threshold: float
@@ -159,6 +165,21 @@ def serialize_state(state: dict) -> dict:
     
     if "prompted_boxes" in state:
         result["prompted_boxes"] = state["prompted_boxes"]
+
+    if "prompted_points" in state:
+        result["prompted_points"] = state["prompted_points"]
+    
+    if "semantic_seg" in state:
+        seg = state["semantic_seg"]
+        seg_np = np.array(seg)
+        # Apply sigmoid to logits and binarize
+        seg_binary = (1.0 / (1.0 + np.exp(-seg_np)) > 0.5).astype(np.uint8)
+        # Shape is [1, 1, H, W] — squeeze to [H, W]
+        if seg_binary.ndim == 4:
+            seg_binary = seg_binary[0, 0]
+        elif seg_binary.ndim == 3:
+            seg_binary = seg_binary[0]
+        result["semantic_seg"] = mask_to_rle(seg_binary)
     
     return result
 
@@ -291,6 +312,49 @@ async def add_box_prompt(request: BoxPromptRequest):
         raise HTTPException(status_code=500, detail=f"Error adding box prompt: {str(e)}")
 
 
+@app.post("/segment/point")
+async def add_point_prompt(request: PointPromptRequest):
+    """Add a point prompt (positive or negative) and re-segment."""
+    if processor is None:
+        raise HTTPException(status_code=503, detail="Model not loaded yet")
+    
+    session = sessions.get(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    try:
+        state = session["state"]
+        
+        # Store prompted point for display (in pixel coordinates)
+        if "prompted_points" not in state:
+            state["prompted_points"] = []
+        
+        img_w = state["original_width"]
+        img_h = state["original_height"]
+        px, py = request.point
+        
+        state["prompted_points"].append({
+            "point": [px * img_w, py * img_h],
+            "label": request.label
+        })
+        
+        start_time = time.perf_counter()
+        state = processor.add_point_prompt(request.point, request.label, state)
+        processing_time_ms = (time.perf_counter() - start_time) * 1000
+        session["state"] = state
+        
+        return {
+            "session_id": request.session_id,
+            "point_type": "positive" if request.label else "negative",
+            "results": serialize_state(state),
+            "processing_time_ms": round(processing_time_ms, 2),
+            "peak_memory_mb": round(mx.get_peak_memory() / (1024 * 1024), 2)
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error adding point prompt: {str(e)}")
+
+
 @app.post("/reset")
 async def reset_prompts(request: SessionRequest):
     """Reset all prompts for a session."""
@@ -310,6 +374,8 @@ async def reset_prompts(request: SessionRequest):
         
         if "prompted_boxes" in state:
             del state["prompted_boxes"]
+        if "prompted_points" in state:
+            del state["prompted_points"]
         
         return {
             "session_id": request.session_id,
@@ -354,5 +420,5 @@ async def delete_session(session_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8008)
 
