@@ -395,10 +395,12 @@ class Sam3Image(nn.Module):
         find_input,
         find_target,
         geometric_prompt: Prompt,
+        encode_text: bool = True,
     ):
         # profile geometry encoder
         prompt, prompt_mask, backbone_out = self._encode_prompt(
-            backbone_out, find_input, geometric_prompt
+            backbone_out, find_input, geometric_prompt,
+            encode_text=encode_text,
         )
 
         # profile encoder

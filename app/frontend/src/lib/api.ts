@@ -94,13 +94,14 @@ export async function addBoxPrompt(
 export async function addPointPrompt(
   sessionId: string,
   point: number[],
-  label: boolean
+  label: boolean,
+  pcsMode: boolean = true
 ): Promise<SegmentResponse> {
   return apiFetch<SegmentResponse>(() =>
     fetch(`${API_BASE}/segment/point`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, point, label }),
+      body: JSON.stringify({ session_id: sessionId, point, label, pcs_mode: pcsMode }),
     })
   );
 }

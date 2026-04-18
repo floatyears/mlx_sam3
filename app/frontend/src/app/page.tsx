@@ -16,6 +16,8 @@ import {
   Server,
   MousePointer,
   Crosshair,
+  ToggleLeft,
+  ToggleRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -58,6 +60,7 @@ export default function Home() {
   const [textPrompt, setTextPrompt] = useState("");
   const [promptLabel, setPromptLabel] = useState<PromptLabel>("positive");
   const [interactionMode, setInteractionMode] = useState<InteractionMode>("point");
+  const [pcsMode, setPcsMode] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [backendStatus, setBackendStatus] = useState<
@@ -192,9 +195,10 @@ export default function Home() {
       setIsLoading(true);
 
       try {
-        const response = await addPointPrompt(sessionId, point, label);
+        const response = await addPointPrompt(sessionId, point, label, pcsMode);
         setResult(response.results);
-        addTiming(`Point (${label ? "positive" : "negative"})`, response.processing_time_ms);
+        const modeLabel = pcsMode ? "PCS" : "vanilla";
+        addTiming(`Point ${modeLabel} (${label ? "+" : "−"})`, response.processing_time_ms);
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Failed to add point prompt"
@@ -203,7 +207,7 @@ export default function Home() {
         setIsLoading(false);
       }
     },
-    [sessionId, addTiming]
+    [sessionId, pcsMode, addTiming]
   );
 
   const handleReset = async () => {
@@ -415,9 +419,37 @@ export default function Home() {
                 </span>
               </div>
 
+              {/* PCS Toggle (only in point mode) */}
+              {interactionMode === "point" && (
+                <div className="pt-2 border-t border-border/50">
+                  <button
+                    onClick={() => setPcsMode(!pcsMode)}
+                    className="flex items-center justify-between w-full group"
+                  >
+                    <div className="flex flex-col items-start">
+                      <span className="text-xs font-medium">
+                        PCS Mode
+                      </span>
+                      <span className="text-[10px] text-muted-foreground leading-tight">
+                        {pcsMode
+                          ? "Concept-aware segmentation"
+                          : "Vanilla point segmentation"}
+                      </span>
+                    </div>
+                    {pcsMode ? (
+                      <ToggleRight className="w-7 h-7 text-primary transition-colors" />
+                    ) : (
+                      <ToggleLeft className="w-7 h-7 text-muted-foreground group-hover:text-foreground transition-colors" />
+                    )}
+                  </button>
+                </div>
+              )}
+
               <p className="text-xs text-muted-foreground">
                 {interactionMode === "point"
-                  ? "Click on the image to add point prompts"
+                  ? pcsMode
+                    ? "Click to segment with concept awareness (PCS)"
+                    : "Click to segment at the exact point (vanilla)"
                   : "Draw boxes on the image to include or exclude regions"}
               </p>
             </CardContent>

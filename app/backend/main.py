@@ -84,6 +84,7 @@ class PointPromptRequest(BaseModel):
     session_id: str
     point: list[float]  # [x, y] normalized in [0, 1]
     label: bool  # True for positive (foreground), False for negative (background)
+    pcs_mode: bool = True  # True for Promptable Concept Segmentation, False for vanilla point segmentation
 
 
 class ConfidenceRequest(BaseModel):
@@ -339,13 +340,16 @@ async def add_point_prompt(request: PointPromptRequest):
         })
         
         start_time = time.perf_counter()
-        state = processor.add_point_prompt(request.point, request.label, state)
+        state = processor.add_point_prompt(
+            request.point, request.label, state, pcs_mode=request.pcs_mode
+        )
         processing_time_ms = (time.perf_counter() - start_time) * 1000
         session["state"] = state
         
         return {
             "session_id": request.session_id,
             "point_type": "positive" if request.label else "negative",
+            "pcs_mode": request.pcs_mode,
             "results": serialize_state(state),
             "processing_time_ms": round(processing_time_ms, 2),
             "peak_memory_mb": round(mx.get_peak_memory() / (1024 * 1024), 2)

@@ -93,3 +93,114 @@ canvas {
   animation: pulse-glow 2s ease-in-out infinite;
 }
 
+/* Mask Overlap Popup */
+@keyframes popup-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.mask-overlap-popup {
+  z-index: 50;
+  min-width: 210px;
+  max-width: 240px;
+  background: oklch(0.16 0.008 285 / 0.92);
+  backdrop-filter: blur(16px) saturate(1.4);
+  border: 1px solid oklch(0.36 0.02 285 / 0.5);
+  border-radius: 12px;
+  box-shadow:
+    0 8px 32px oklch(0 0 0 / 0.5),
+    0 0 0 1px oklch(1 0 0 / 0.04) inset,
+    0 1px 0 0 oklch(1 0 0 / 0.06) inset;
+  animation: popup-slide-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.mask-overlap-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: oklch(0.85 0 0);
+  border-bottom: 1px solid oklch(0.32 0.015 285 / 0.6);
+  letter-spacing: 0.02em;
+}
+
+.mask-overlap-icon {
+  display: flex;
+  align-items: center;
+  color: var(--color-primary);
+}
+
+.mask-overlap-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.mask-overlap-item {
+  border-radius: 8px;
+  overflow: hidden;
+  background: oklch(0.2 0.008 285 / 0.5);
+  border: 1px solid oklch(0.3 0.015 285 / 0.4);
+  transition: border-color 0.15s ease, background 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.mask-overlap-item:hover {
+  border-color: var(--color-primary);
+  background: oklch(0.22 0.01 285 / 0.6);
+}
+
+.mask-overlap-preview {
+  max-width: 100%;
+  max-height: 180px;
+  width: auto;
+  height: auto;
+  display: block;
+  border-radius: 6px 6px 0 0;
+  object-fit: contain;
+}
+
+.mask-overlap-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
+.mask-overlap-color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px oklch(0 0 0 / 0.3);
+}
+
+.mask-overlap-label {
+  color: oklch(0.8 0 0);
+  font-weight: 500;
+  flex: 1;
+}
+
+.mask-overlap-score {
+  color: var(--color-primary);
+  font-weight: 700;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+}
+

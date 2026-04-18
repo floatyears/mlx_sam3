@@ -123,11 +123,15 @@ class Sam3Processor:
 
         return self._call_grounding(state)
 
-    def add_point_prompt(self, point: List, label: bool, state: Dict):
+    def add_point_prompt(self, point: List, label: bool, state: Dict, pcs_mode: bool = True):
         """Adds a point prompt and run the inference.
         The image needs to be set, but not necessarily the text prompt.
         The point is assumed to be in [x, y] format and normalized in [0, 1] range.
         The label is True for a positive point (foreground), False for a negative point (background).
+        
+        Args:
+            pcs_mode: If True, use Promptable Concept Segmentation (full SAM3 grounding with
+                text context). If False, use vanilla point segmentation without text encoding.
         """
         if "backbone_out" not in state:
             raise ValueError("You must call set_image before add_point_prompt")
@@ -147,7 +151,7 @@ class Sam3Processor:
         labels = mx.array([label], dtype=mx.bool_).reshape(1, 1)
         state["geometric_prompt"].append_points(points, labels)
 
-        return self._call_grounding(state)
+        return self._call_grounding(state, encode_text=pcs_mode)
 
     def reset_all_prompts(self, state: Dict):
         """Removes all the prompts and results"""
@@ -169,12 +173,13 @@ class Sam3Processor:
     def set_confidence_threshold(self, threshold: float, state=None):
         pass
 
-    def _call_grounding(self, state: Dict):
+    def _call_grounding(self, state: Dict, encode_text: bool = True):
         outputs = self.model.call_grounding(
             backbone_out=state["backbone_out"],
             find_input=self.find_stage,
             geometric_prompt=state["geometric_prompt"],
-            find_target=None
+            find_target=None,
+            encode_text=encode_text,
         )
 
         out_bbox = outputs["pred_boxes"]

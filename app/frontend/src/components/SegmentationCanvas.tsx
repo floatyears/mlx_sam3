@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useEffect, useState, useCallback } from "react";
+import React, { useRef, useEffect, useState, useCallback, useMemo } from "react";
 import type { SegmentationResult, RLEMask } from "@/lib/api";
 
 export type InteractionMode = "box" | "point";
@@ -28,6 +28,13 @@ const COLORS = [
   [251, 146, 60], // Orange
   [147, 197, 253], // Light Blue
 ];
+
+// --- UI Configuration Constants ---
+export const UI_CONFIG = {
+  PREVIEW_WIDTH: 180,           // Base width for calculating preview thumbnail scaling/size
+  PREVIEW_TOP_MARGIN: 10,       // Top visual margin (px) inside the mask preview card
+  HOVER_DELAY_MS: 80,           // Delay before showing overlap popup when hovering
+};
 
 /**
  * Decode RLE mask to ImageData for canvas rendering.
@@ -65,6 +72,37 @@ function decodeRLEToImageData(rle: RLEMask, color: number[]): ImageData | null {
   return imageData;
 }
 
+/**
+ * Decode RLE mask to a boolean array for hit-testing.
+ * Returns a flat Uint8Array where 1 = foreground, 0 = background.
+ */
+function decodeRLEToBooleanArray(rle: RLEMask): Uint8Array | null {
+  const [height, width] = rle.size;
+  if (height === 0 || width === 0) return null;
+
+  const arr = new Uint8Array(width * height);
+  const { counts } = rle;
+
+  let pixelIdx = 0;
+  let isForeground = false;
+
+  for (const count of counts) {
+    if (isForeground) {
+      for (let j = 0; j < count && pixelIdx < width * height; j++) {
+        arr[pixelIdx] = 1;
+        pixelIdx++;
+      }
+    } else {
+      pixelIdx += count;
+    }
+    isForeground = !isForeground;
+  }
+
+  return arr;
+}
+
+
+
 export function SegmentationCanvas({
   imageUrl,
   imageWidth,
@@ -89,6 +127,24 @@ export function SegmentationCanvas({
     y: number;
   } | null>(null);
   const [displayScale, setDisplayScale] = useState(1);
+
+  // Hover state for mask overlap popup
+  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
+  const [overlappingMaskIndices, setOverlappingMaskIndices] = useState<number[]>([]);
+  const [popupPos, setPopupPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const popupRef = useRef<HTMLDivElement>(null);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Precompute decoded mask boolean arrays for hit-testing
+  const maskBooleans = useMemo(() => {
+    if (!result?.masks) return [];
+    return result.masks.map((mask) => {
+      if (mask && mask.counts && mask.size) {
+        return decodeRLEToBooleanArray(mask);
+      }
+      return null;
+    });
+  }, [result?.masks]);
 
   // Calculate display scale to fit image in container
   useEffect(() => {
@@ -293,6 +349,35 @@ export function SegmentationCanvas({
     };
   };
 
+  // Check which masks overlap at a given image coordinate
+  const getMasksAtPixel = useCallback(
+    (imgX: number, imgY: number): number[] => {
+      if (!result?.masks || maskBooleans.length === 0) return [];
+
+      const indices: number[] = [];
+      for (let i = 0; i < result.masks.length; i++) {
+        const boolArr = maskBooleans[i];
+        const mask: RLEMask = result.masks[i];
+        if (!boolArr || !mask) continue;
+
+        const maskH = mask.size[0];
+        const maskW = mask.size[1];
+        // Convert image coordinates to mask pixel coordinates
+        const mx = Math.floor((imgX / imageWidth) * maskW);
+        const my = Math.floor((imgY / imageHeight) * maskH);
+
+        if (mx >= 0 && mx < maskW && my >= 0 && my < maskH) {
+          const pixelIndex = my * maskW + mx;
+          if (boolArr[pixelIndex] === 1) {
+            indices.push(i);
+          }
+        }
+      }
+      return indices;
+    },
+    [result?.masks, maskBooleans, imageWidth, imageHeight]
+  );
+
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (isLoading) return;
     const coords = getCanvasCoordinates(e);
@@ -307,10 +392,41 @@ export function SegmentationCanvas({
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || interactionMode !== "box") return;
     const coords = getCanvasCoordinates(e);
-    if (coords) {
+    if (!coords) return;
+
+    // Handle box drawing
+    if (isDrawing && interactionMode === "box") {
       setCurrentPoint(coords);
+    }
+
+    // Handle hover detection for mask overlap popup
+    if (!isDrawing && result?.masks && result.masks.length > 0) {
+      // Convert display coords to image coords
+      const imgX = coords.x / displayScale;
+      const imgY = coords.y / displayScale;
+
+      // Debounce the hover check
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+      }
+
+      hoverTimeoutRef.current = setTimeout(() => {
+        const overlapping = getMasksAtPixel(imgX, imgY);
+        if (overlapping.length > 0) {
+          setOverlappingMaskIndices(overlapping);
+          // Position popup at the right side of the canvas
+          const canvas = canvasRef.current;
+          if (canvas) {
+            setPopupPos({
+              x: canvas.width + 12,
+              y: Math.max(0, coords.y - 40),
+            });
+          }
+        } else {
+          setOverlappingMaskIndices([]);
+        }
+      }, UI_CONFIG.HOVER_DELAY_MS);
     }
   };
 
@@ -377,7 +493,111 @@ export function SegmentationCanvas({
       setStartPoint(null);
       setCurrentPoint(null);
     }
+    // Clear hover state
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+    }
+    setOverlappingMaskIndices([]);
   };
+
+  // Generate preview canvases for overlapping masks
+  const maskPreviews = useMemo(() => {
+    if (overlappingMaskIndices.length === 0 || !result?.masks || !imageRef.current) {
+      return [];
+    }
+
+    const globalScale = UI_CONFIG.PREVIEW_WIDTH / imageWidth;
+
+    return overlappingMaskIndices.map((maskIdx) => {
+      const mask = result.masks![maskIdx];
+      const color = COLORS[maskIdx % COLORS.length];
+      const score = result.scores?.[maskIdx] ?? 0;
+
+      // 1. Calculate the exact tight bounding box from RLE counts
+      const maskW = mask.size[1];
+      const maskH = mask.size[0];
+      
+      let minX = maskW, minY = maskH, maxX = 0, maxY = 0;
+      let pixelIdx = 0;
+      let isForeground = false;
+      
+      for (const count of mask.counts) {
+        if (isForeground && count > 0) {
+          const startIdx = pixelIdx;
+          const endIdx = pixelIdx + count - 1;
+          
+          const startY = Math.floor(startIdx / maskW);
+          const endY = Math.floor(endIdx / maskW);
+          
+          if (startY < minY) minY = startY;
+          if (endY > maxY) maxY = endY;
+          
+          if (startY === endY) {
+            const startX = startIdx % maskW;
+            const endX = endIdx % maskW;
+            if (startX < minX) minX = startX;
+            if (endX > maxX) maxX = endX;
+          } else {
+            minX = 0;
+            maxX = maskW - 1;
+          }
+        }
+        pixelIdx += count;
+        isForeground = !isForeground;
+      }
+      
+      let sx = 0, sy = 0, sw = maskW, sh = maskH;
+      if (minX <= maxX && minY <= maxY) {
+        sx = minX;
+        sy = minY;
+        sw = maxX - minX + 1;
+        sh = maxY - minY + 1;
+      }
+
+      // 2. Determine canvas size based on global image scale
+      // This ensures all thumbnails share the same scaling proportion as the original image
+      const dw = Math.max(1, Math.round(sw * globalScale));
+      const dh = Math.max(1, Math.round(sh * globalScale));
+
+      // Create preview canvas
+      const canvas = document.createElement("canvas");
+      canvas.width = dw;
+      canvas.height = dh;
+      const ctx = canvas.getContext("2d")!;
+
+      const maskImageData = decodeRLEToImageData(mask, color);
+      if (maskImageData) {
+        const offscreen = document.createElement("canvas");
+        offscreen.width = maskW;
+        offscreen.height = maskH;
+        const offCtx = offscreen.getContext("2d")!;
+        offCtx.putImageData(maskImageData, 0, 0);
+
+        // 1. Draw the tight mask region to act as the alpha channel shape at 0, 0
+        ctx.drawImage(offscreen, sx, sy, sw, sh, 0, 0, dw, dh);
+
+        // 2. Map original image pixels onto that shape
+        ctx.globalCompositeOperation = "source-in";
+        ctx.drawImage(imageRef.current!, sx, sy, sw, sh, 0, 0, dw, dh);
+
+        // 3. Overlay the mask color slightly to indicate which mask it is
+        ctx.globalCompositeOperation = "source-over";
+        ctx.globalAlpha = 0.35;
+        ctx.drawImage(offscreen, sx, sy, sw, sh, 0, 0, dw, dh);
+        ctx.globalAlpha = 1.0;
+      } else {
+        // Fallback
+        ctx.drawImage(imageRef.current!, sx, sy, sw, sh, 0, 0, dw, dh);
+      }
+
+      return {
+        dataUrl: canvas.toDataURL(),
+        maskIdx,
+        color,
+        score,
+      };
+    });
+  }, [overlappingMaskIndices, result, imageWidth, imageHeight]);
 
   if (!imageUrl) {
     return (
@@ -415,6 +635,64 @@ export function SegmentationCanvas({
           <div className="flex items-center gap-3 bg-card/90 backdrop-blur-sm px-4 py-2 rounded-lg border border-border">
             <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
             <span className="text-sm">Processing...</span>
+          </div>
+        </div>
+      )}
+
+      {/* Overlapping Masks Popup */}
+      {maskPreviews.length > 0 && (
+        <div
+          ref={popupRef}
+          className="mask-overlap-popup"
+          style={{
+            position: "absolute",
+            left: `${popupPos.x}px`,
+            top: `${popupPos.y}px`,
+          }}
+          onMouseEnter={() => {
+            // Keep popup visible while hovering over it
+            if (hoverTimeoutRef.current) {
+              clearTimeout(hoverTimeoutRef.current);
+            }
+          }}
+          onMouseLeave={() => {
+            setOverlappingMaskIndices([]);
+          }}
+        >
+          <div className="mask-overlap-header">
+            <div className="mask-overlap-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="2" width="13" height="13" rx="2" />
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+              </svg>
+            </div>
+            <span>{maskPreviews.length} {maskPreviews.length === 1 ? "Mask" : "Overlapping Masks"}</span>
+          </div>
+          <div className="mask-overlap-list">
+            {maskPreviews.map((preview) => (
+              <div key={preview.maskIdx} className="mask-overlap-item">
+                <img
+                  src={preview.dataUrl}
+                  alt={`Mask ${preview.maskIdx + 1}`}
+                  className="mask-overlap-preview"
+                  style={{ marginTop: `${UI_CONFIG.PREVIEW_TOP_MARGIN}px` }}
+                />
+                <div className="mask-overlap-info">
+                  <div
+                    className="mask-overlap-color-dot"
+                    style={{
+                      backgroundColor: `rgb(${preview.color[0]}, ${preview.color[1]}, ${preview.color[2]})`,
+                    }}
+                  />
+                  <span className="mask-overlap-label">
+                    Mask {preview.maskIdx + 1}
+                  </span>
+                  <span className="mask-overlap-score">
+                    {(preview.score * 100).toFixed(0)}%
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
